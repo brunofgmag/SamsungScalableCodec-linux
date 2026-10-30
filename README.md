@@ -71,5 +71,6 @@ If the earbuds refuse the codec, PipeWire falls back to the next one (AAC/SBC).
 
 ## License
 
-The original code in this repository has no license yet, so all rights remain with its author until one is added.
-Vendored code keeps its own: `third_party/celt/` is BSD-3-Clause (`COPYING.opus`), `third_party/pipewire-bluez5/` is MIT.
+Original code: GNU GPL version 3 or later (`LICENSE`, SPDX `GPL-3.0-or-later`).
+Vendored code keeps its own licenses, which are GPL compatible: `third_party/celt/` is BSD-3-Clause (`COPYING.opus`),
+`third_party/pipewire-bluez5/` is MIT (`COPYING.pipewire`).

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 lori28167 */
 /*
  * Tests for the SSC encoder: frame layout, determinism, error handling and a round trip through the CELT decoder
  * (configured with the same SSC mode) that measures the signal-to-noise ratio of every preset.

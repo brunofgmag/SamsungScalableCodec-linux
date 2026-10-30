@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Trace the range-coder calls made by Samsung's SSC encoder for one frame.
 
 Hooks the exported (S23: ssc_ec_*, Android 12: ec_*) range coder entry points inside the emulated

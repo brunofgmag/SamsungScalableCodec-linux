@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Identify the arrays referenced by the SSC mode struct (eBands, allocVectors, logN, window, pulse cache ...)
 by dumping the struct and the head of everything it points to.
 

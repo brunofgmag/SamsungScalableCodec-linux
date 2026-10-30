@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Log the arguments of every ssc_comb_filter call made by the emulated encoder (pitch pre-filter): periods, gains, tapsets.
 
     ssc_combtrace.py LIB.so [--frames 14] [--f0 190] [--rate 229000]

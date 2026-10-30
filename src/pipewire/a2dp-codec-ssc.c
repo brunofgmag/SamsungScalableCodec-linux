@@ -1,4 +1,7 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 lori28167 */
+/* The structure and some code are adapted from PipeWire's spa/plugins/bluez5/a2dp-codec-ldac.c, which is MIT
+ * licensed (Copyright © 2018 Wim Taymans and contributors); see third_party/pipewire-bluez5/COPYING.pipewire. */
 /*
  * Samsung Scalable Codec (SSC) A2DP source codec for the PipeWire bluez5 plugin.
  *

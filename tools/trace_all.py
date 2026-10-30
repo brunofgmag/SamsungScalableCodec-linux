@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Compare, frame by frame, the range-coder symbols written by the Samsung encoder (emulated) with the symbols
 read by the Opus-based decoder, using the same input as tools/ssc_vectors.py.
 

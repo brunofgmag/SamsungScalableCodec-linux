@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Find the Thumb functions of the Buds3 Pro firmware that load pointers to given strings (literal-pool ldr xrefs).
 
 Memory map recovered from the header (cafecafe image, header size 0x1c): file offset F is executed at 0x0c01ffe4+F

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Generate reference test vectors with the emulated Samsung encoder.
 
 File layout (little endian): u32 nframes, u32 frame_size, u32 channels, u32 bitrate, u32 fs,

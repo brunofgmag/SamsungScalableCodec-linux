@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Create the SSC flavour of Opus' CELT sources from a pristine opus-1.5.2/celt directory.
 
     make_ssc_celt.py OPUS_CELT_DIR OUT_DIR [--debug]

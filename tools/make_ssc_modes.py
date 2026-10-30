@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Patch Opus' celt/modes.c so that opus_custom_mode_create() builds the SSC mode
 (band layout + allocation table taken from the Samsung encoder; see ssc_tables.h).
 

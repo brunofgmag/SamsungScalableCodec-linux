@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Tabulate what the emulated SSC encoder produces for every (bits, fs, bitrate): packet length and the 4 header bytes.
 
     ssc_table.py LIB.so [--frames 3]

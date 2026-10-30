@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Disassemble Thumb-2 code of the Buds3 Pro firmware with radare2, annotating literal-pool string pointers.
 
     bes_dis.py FIRMWARE.bin START_FILE_OFFSET COUNT_INSTRUCTIONS

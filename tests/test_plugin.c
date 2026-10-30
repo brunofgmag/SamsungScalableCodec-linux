@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 lori28167 */
 /*
  * Loads the built PipeWire codec plugin the way the bluez5 host does (dlopen + spa_handle_factory_enum + the
  * Bluez5CodecMedia interface) and drives the codec through its callbacks: caps, configuration selection with the

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """See how the signal-dependent header bits (byte 2 bits 2-3, byte 3 bits 5-7) react to the input.
 
     ssc_hdrscan.py LIB.so [--bits 16] [--fs 44100] [--rate 229000]

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 lori28167 */
 /*
  * SSC encoder: CELT core configured as in the Samsung codec, plus the 4-byte frame header.
  */

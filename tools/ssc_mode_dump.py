@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Dump the CELT-like mode (band layout etc.) that the SSC encoder state points to.
 
     ssc_mode_dump.py LIB.so [--fs 48000]

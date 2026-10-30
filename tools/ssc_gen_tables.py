@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Write the SSC mode tables (band layout, allocation) read from the emulated encoder as a C header.
 
     ssc_gen_tables.py LIB.so OUT.h

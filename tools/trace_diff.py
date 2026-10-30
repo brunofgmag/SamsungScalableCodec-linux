@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Compare the canonical range-coder traces of the Samsung encoder and of the Opus decoder for one frame.
 
     trace_diff.py ENC.txt DEC.txt [context]

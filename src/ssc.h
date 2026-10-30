@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 lori28167 */
 /*
  * SSC: encoder for the Samsung Scalable Codec (A2DP vendor codec 0x0075:0x0103).
  *

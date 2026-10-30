@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 project('ssc', 'c',
   version: '0.1.0',
   license: 'BSD-3-Clause',

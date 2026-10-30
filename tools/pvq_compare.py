@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 lori28167
 """Differential test of the PVQ enumeration: Samsung's ssc_encode_pulses vs Opus' encode_pulses.
 
     pvq_compare.py LIB.so OUT.txt [--cases 80]
