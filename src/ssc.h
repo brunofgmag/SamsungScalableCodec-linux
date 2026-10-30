@@ -70,6 +70,8 @@ int ssc_preset_for_bitrate(int bps);
  */
 ssc_encoder *ssc_encoder_new(int sample_rate, int channels, int *error);
 void ssc_encoder_free(ssc_encoder *enc);
+/* Switch the pitch pre-filter on (default) or off. Off costs some efficiency on tonal signals; the sink cannot be told either way. */
+void ssc_encoder_set_prefilter(ssc_encoder *enc, int on);
 /* Forget all history (start of a stream or after a discontinuity). */
 void ssc_encoder_reset(ssc_encoder *enc);
 

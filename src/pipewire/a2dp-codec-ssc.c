@@ -135,11 +135,7 @@ static int codec_enum_config(const struct media_codec *codec, uint32_t flags,
 	spa_pod_builder_add(b,
 			SPA_FORMAT_mediaType,	SPA_POD_Id(SPA_MEDIA_TYPE_audio),
 			SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-			SPA_FORMAT_AUDIO_format, SPA_POD_CHOICE_ENUM_Id(4,
-								SPA_AUDIO_FORMAT_F32,
-								SPA_AUDIO_FORMAT_F32,
-								SPA_AUDIO_FORMAT_S32,
-								SPA_AUDIO_FORMAT_S16),
+			SPA_FORMAT_AUDIO_format, SPA_POD_Id(SPA_AUDIO_FORMAT_S16),
 			0);
 	spa_pod_builder_prop(b, SPA_FORMAT_AUDIO_rate, 0);
 
@@ -239,6 +235,8 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 	/* UHQ: like the phone, two 9 ms frames per packet when they fit (the sink takes that for the 152k and 291k presets) */
 	this->frames_per_packet = (uhq && preset != SSC_PRESET_UHQ_584K &&
 			sizeof(struct rtp_header) + 2 * (size_t)ssc_frame_bytes(preset) <= mtu) ? 2 : 1;
+	if (getenv("SSC_UHQ_FRAMES") != NULL && atoi(getenv("SSC_UHQ_FRAMES")) == 1)
+		this->frames_per_packet = 1;	/* experiment: one frame per packet */
 	if (sizeof(struct rtp_header) + (size_t)ssc_frame_bytes(preset) > mtu) {
 		errno = EINVAL;
 		goto error;
@@ -255,6 +253,8 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 		errno = res == SSC_ERR_MEMORY ? ENOMEM : EINVAL;
 		goto error;
 	}
+	if (getenv("SSC_NOPF") != NULL)
+		ssc_encoder_set_prefilter(this->enc, 0);
 	spa_log_info(log_, "SSC: rate %d%s, format %s, preset %d (%d bit/s, %d byte frames, %d per packet), mtu %zu",
 			this->rate, uhq ? " (UHQ)" : "", this->format == SPA_AUDIO_FORMAT_F32 ? "F32" : this->format == SPA_AUDIO_FORMAT_S32 ? "S32" : "S16",
 			preset, ssc_preset_bitrate(preset), ssc_frame_bytes(preset), this->frames_per_packet, mtu);

@@ -32,6 +32,7 @@ struct ssc_encoder {
 	int channels;
 	int uhq;
 	unsigned seq;
+	float clipped[SSC_FRAME_SAMPLES * 2];
 };
 
 int ssc_frame_bytes(int preset)
@@ -120,6 +121,12 @@ void ssc_encoder_free(ssc_encoder *enc)
 	free(enc);
 }
 
+void ssc_encoder_set_prefilter(ssc_encoder *enc, int on)
+{
+	if (enc != NULL)
+		opus_custom_encoder_ctl(enc->celt, CELT_SET_PREDICTION(on ? 2 : 1));
+}
+
 void ssc_encoder_reset(ssc_encoder *enc)
 {
 	if (enc == NULL)
@@ -178,10 +185,17 @@ int ssc_encode(ssc_encoder *enc, const int16_t *pcm, int preset, uint8_t *out, s
 
 int ssc_encode_float(ssc_encoder *enc, const float *pcm, int preset, uint8_t *out, size_t out_size)
 {
-	int frame_bytes = encode_begin(enc, pcm, preset, out, out_size);
+	int i, frame_bytes = encode_begin(enc, pcm, preset, out, out_size);
 
 	if (frame_bytes < 0)
 		return frame_bytes;
-	return encode_end(enc, opus_custom_encode_float(enc->celt, pcm, SSC_FRAME_SAMPLES, out + SSC_HEADER_SIZE,
+	/* what the 16 bit path gets for free: samples beyond full scale (loud bass, a gain upstream) are clipped here, because the
+	 * sink's decoder saturates them much more audibly than a clean clip; NaN becomes silence */
+	for (i = 0; i < SSC_FRAME_SAMPLES * 2; i++) {
+		float v = pcm[i];
+
+		enc->clipped[i] = v > 1.0f ? 1.0f : v < -1.0f ? -1.0f : v == v ? v : 0.0f;
+	}
+	return encode_end(enc, opus_custom_encode_float(enc->celt, enc->clipped, SSC_FRAME_SAMPLES, out + SSC_HEADER_SIZE,
 			frame_bytes - SSC_HEADER_SIZE), preset, frame_bytes, out);
 }

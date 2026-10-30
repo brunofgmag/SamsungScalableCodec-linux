@@ -2039,7 +2039,7 @@ int celt_encode_with_ec(CELTEncoder * OPUS_RESTRICT st, const opus_val16 * pcm, 
       dynalloc_loop_logp = dynalloc_logp;
       boost = 0;
       for (j = 0; tell+(dynalloc_loop_logp<<BITRES) < total_bits-total_boost
-            && boost < cap[i] && !(i >= 18 && i <= 20 && boost+quanta >= 1001); j++)
+            && boost < cap[i] && !(mode->Fs >= 96000 && i >= 18 && i <= 20 && boost+quanta >= 1001); j++)
       {
          int flag;
          flag = j<offsets[i];

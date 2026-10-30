@@ -8,7 +8,7 @@
 Changes, each verified against Samsung's libScalable_Encoder.so (see NOTES.md):
   1. range coder width: EC_CODE_BITS 32 -> 24 (rng starts at 0x800000, byte = val >> 23, renormalise below 0x8000)
   2. the postfilter tapset is not transmitted (decoder: constant, encoder: symbol omitted)
-  3. dynalloc boosts of bands 18-20 stay below 1001 (see below)
+  3. UHQ only: dynalloc boosts of bands 18-20 stay below 1001 (see below); the 44.1/48 kHz stream must stay bit-identical to the verified one
   4. the 96 kHz (UHQ) mode transmits no tf symbols at all: tf_res is the table default (tf_select_table[LM][4*isTransient])
   --debug adds env-controlled prints (DBGE: coarse band energies per frame) used by the comparison tools.
 The mode itself (22 bands, allocation, pulse cache, no pre-emphasis) is built by tools/make_ssc_modes.py.
@@ -45,10 +45,10 @@ def main():
     patch(enc, "         ec_enc_icdf(enc, prefilter_tapset, tapset_icdf, 2);\n",
           "         /* SSC does not transmit the postfilter tapset */\n")
 
-    # The decoder side of SSC widens big allocation boosts of the top bands (NOTES.md, "high-band offset copy"); keeping the
+    # UHQ only. The decoder side of SSC widens big allocation boosts of the top bands (NOTES.md, "high-band offset copy"); keeping the
     # boosts of bands 18-20 below 1001 (1/8 bit) means that rule can never fire on our streams.
     patch(enc, "            && boost < cap[i]; j++)\n",
-          "            && boost < cap[i] && !(i >= 18 && i <= 20 && boost+quanta >= 1001); j++)\n")
+          "            && boost < cap[i] && !(mode->Fs >= 96000 && i >= 18 && i <= 20 && boost+quanta >= 1001); j++)\n")
 
     # UHQ: no tf symbols (the mode is recognised by its sample rate, see make_ssc_modes.py)
     patch(dec, "   tf_decode(start, end, isTransient, tf_res, LM, dec);\n",
