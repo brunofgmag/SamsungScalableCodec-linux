@@ -34,6 +34,10 @@ def signal(kind, n, c, fs, total, rng):
         T = total / fs
         k = math.log(0.9 * fs / 2 / 100)
         return 8000 * math.sin(2 * math.pi * 100 * T / k * (math.exp(k * t / T) - 1) + c) * amp
+    if kind == "kick":      # bass drum hits every 0.1 s (fast onset, decaying 50 Hz) plus a hi-hat tick: transient frames
+        ph = (n / fs) % 0.1
+        env = math.exp(-ph * 30) * min(1.0, ph * 2000)
+        return 0.6 * env * math.sin(2 * math.pi * (45 + 60 * math.exp(-ph * 40)) * ph) + (0.2 * math.exp(-ph * 400) * rng.uniform(-1, 1) if ph < 0.03 else 0.0)
     if kind == "quiet":
         return (30 * math.sin(2 * math.pi * 330 * (c + 1) * t) + 10 * math.sin(2 * math.pi * 1800 * t + c)) * amp
     if kind == "loud":
@@ -53,6 +57,7 @@ def main():
     ap.add_argument("--frame", type=int, default=864)
     ap.add_argument("--bits", type=int, default=16, help="4th argument of ssc_encoder_create: 16, 24 or 34 (0x22, UHQ)")
     ap.add_argument("--signal", default="tones")
+    ap.add_argument("--pcm", help="interleaved f32 stereo file at --fs used instead of --signal (starts 10 s in)")
     a = ap.parse_args()
 
     o = Oracle(a.lib)
@@ -62,13 +67,20 @@ def main():
     rng = random.Random(7)
     scale = 32768.0 if a.bits == 16 else 8388608.0
     total = a.frames * a.frame
+    src = None
+    if a.pcm:
+        import array
+        src = array.array("f")
+        with open(a.pcm, "rb") as fh:
+            fh.seek(4 * a.ch * 10 * a.fs)
+            src.frombytes(fh.read(4 * a.ch * total))
     n = 0
     blob = b"SSCV" + struct.pack("<7I", 2, a.frames, a.frame, a.ch, a.rate, a.fs, a.bits)
     for _ in range(a.frames):
         pcm = []
         for _ in range(a.frame):
             for c in range(a.ch):
-                pcm.append(signal(a.signal, n, c, a.fs, total, rng))
+                pcm.append(src[n * a.ch + c] if src is not None else signal(a.signal, n, c, a.fs, total, rng))
             n += 1
         ints = [int(round(max(-1.0, min(1.0 - 1e-9, v)) * scale)) for v in pcm]
         pp = o.alloc(struct.pack("<%di" % len(ints), *ints))

@@ -255,8 +255,9 @@ static void test_uhq(void)
 			int len = ssc_encode_float(enc, flt + 2 * SSC_FRAME_SAMPLES * i, preset, frame, sizeof(frame));
 
 			CHECK(len == frame_len[k], "uhq preset %d frame %d: length %d", preset, i, len);
-			CHECK(frame[0] == 0xff && frame[1] == (0xe0 | (i >> 4 & 15)) && frame[2] == (((i & 15) << 4) | 1) && frame[3] == info[k],
+			CHECK(frame[0] == 0xff && frame[1] == (0xe0 | (i >> 4 & 15)) && (frame[2] & 0x0f) % 4 == 1 && (frame[2] >> 4) == (i & 15) && frame[3] == info[k],
 			      "uhq preset %d frame %d: bad header %02x %02x %02x %02x", preset, i, frame[0], frame[1], frame[2], frame[3]);
+			opus_custom_decoder_ctl(dec, CELT_SET_END_BAND(22 - ((frame[2] & 15) - 1) / 4));	/* bands coded, from the header */
 			opus_custom_decode_float(dec, frame + SSC_HEADER_SIZE, len - SSC_HEADER_SIZE, dec_out + 2 * SSC_FRAME_SAMPLES * i, SSC_FRAME_SAMPLES);
 		}
 		for (n = (long)WARMUP * SSC_FRAME_SAMPLES; n < (long)FRAMES * SSC_FRAME_SAMPLES; n++) {
@@ -281,6 +282,41 @@ static void test_uhq(void)
 
 		CHECK(ssc_encode(e48, pcm, SSC_PRESET_UHQ_291K, frame, sizeof(frame)) == SSC_ERR_ARGUMENT, "UHQ preset on a 48 kHz encoder must be refused");
 		ssc_encoder_free(e48);
+	}
+	/* transients (kick drum hits): the 96 kHz mode has no tf symbols, tf stays 0 also for short blocks */
+	{
+		int celt_err = 0, i;
+		ssc_encoder *enc = ssc_encoder_new(96000, 2, NULL);
+		OpusCustomMode *mode = opus_custom_mode_create(96000, SSC_FRAME_SAMPLES, &celt_err);
+		OpusCustomDecoder *dec = opus_custom_decoder_create(mode, 2, &celt_err);
+		double sig = 0, noise = 0;
+
+		for (n = 0; n < (long)FRAMES * SSC_FRAME_SAMPLES; n++) {
+			double ph = fmod((double)n / 96000, 0.1), env = exp(-ph * 30) * fmin(1.0, ph * 2000);
+			float v = (float)(0.6 * env * sin(2 * M_PI * (45 + 60 * exp(-ph * 40)) * ph));
+
+			flt[2 * n] = v;
+			flt[2 * n + 1] = 0.8f * v;
+		}
+		opus_custom_decoder_ctl(dec, CELT_SET_SIGNALLING(0));
+		for (i = 0; i < FRAMES; i++) {
+			int len = ssc_encode_float(enc, flt + 2 * SSC_FRAME_SAMPLES * i, SSC_PRESET_UHQ_291K, frame, sizeof(frame));
+
+			opus_custom_decoder_ctl(dec, CELT_SET_END_BAND(22 - ((frame[2] & 15) - 1) / 4));
+			opus_custom_decode_float(dec, frame + SSC_HEADER_SIZE, len - SSC_HEADER_SIZE, dec_out + 2 * SSC_FRAME_SAMPLES * i, SSC_FRAME_SAMPLES);
+		}
+		for (n = (long)WARMUP * SSC_FRAME_SAMPLES; n < (long)FRAMES * SSC_FRAME_SAMPLES; n++)
+			for (k = 0; k < 2; k++) {
+				double x = flt[2 * (n - DELAY) + k], y = dec_out[2 * n + k];
+
+				sig += x * x;
+				noise += (x - y) * (x - y);
+			}
+		printf("UHQ kick drum: round trip SNR %.1f dB\n", 10 * log10(sig / (noise + 1e-30)));
+		CHECK(10 * log10(sig / (noise + 1e-30)) >= 25, "UHQ transient SNR too low");
+		ssc_encoder_free(enc);
+		opus_custom_decoder_destroy(dec);
+		opus_custom_mode_destroy(mode);
 	}
 	free(pcm);
 	free(flt);

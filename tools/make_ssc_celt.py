@@ -9,7 +9,7 @@ Changes, each verified against Samsung's libScalable_Encoder.so (see NOTES.md):
   1. range coder width: EC_CODE_BITS 32 -> 24 (rng starts at 0x800000, byte = val >> 23, renormalise below 0x8000)
   2. the postfilter tapset is not transmitted (decoder: constant, encoder: symbol omitted)
   3. UHQ only: dynalloc boosts of bands 18-20 stay below 1001 (see below); the 44.1/48 kHz stream must stay bit-identical to the verified one
-  4. the 96 kHz (UHQ) mode transmits no tf symbols at all: tf_res is the table default (tf_select_table[LM][4*isTransient])
+  4. the 96 kHz (UHQ) mode transmits no tf symbols at all: tf_res is the table default (0: no tf change, also for transient frames)
   --debug adds env-controlled prints (DBGE: coarse band energies per frame) used by the comparison tools.
 The mode itself (22 bands, allocation, pulse cache, no pre-emphasis) is built by tools/make_ssc_modes.py.
 """
@@ -45,6 +45,33 @@ def main():
     patch(enc, "         ec_enc_icdf(enc, prefilter_tapset, tapset_icdf, 2);\n",
           "         /* SSC does not transmit the postfilter tapset */\n")
 
+    # UHQ: the stock transient detector (tuned for 48 kHz) flags every frame at 96 kHz, which smears the bass with 8 short blocks of
+    # 444 Hz resolution (and the sink applies no tf change). Long blocks of 9 ms only.
+    patch(enc, "   if (st->complexity >= 1 && !st->lfe)\n   {\n      /* Reduces the likelihood of energy instability",
+          "   if (st->complexity >= 1 && !st->lfe && mode->Fs < 96000)\n   {\n      /* Reduces the likelihood of energy instability")
+
+    # UHQ: per-frame bandwidth. Samsung codes only the bands up to the last one with energy (at least 19 of 22) and tells the sink in the
+    # frame header (flags nibble = 1 + 4*(22-end)). Coding the empty top bands anyway costs 15 dB of SNR on real music.
+    patch(enc, "   int lfe;\n   int disable_inv;", "   int lfe;\n   int ssc_end;\t/* bands coded in the last frame (reported through control 10099) */\n   int disable_inv;")
+    patch(enc, "   end = st->end;\n", "   end = st->end;\n   st->ssc_end = end;\n")
+    patch(enc, "   amp2Log2(mode, effEnd, end, bandE, bandLogE, C);\n\n   ALLOC(surround_dynalloc",
+          "   amp2Log2(mode, effEnd, end, bandE, bandLogE, C);\n"
+          "   if (mode->Fs >= 96000 && end == mode->nbEBands) {\n"
+          "      int ee = 19, k;\n"
+          "      for (k = end-1; k >= 19; k--) {\n"
+          "         float e = 0;\n"
+          "         int cc;\n"
+          "         for (cc = 0; cc < C; cc++) e += bandLogE[k + cc*nbEBands];\n"
+          "         if (e/C > -4.f) { ee = k+1; break; }\n"
+          "      }\n"
+          "      end = ee;\n"
+          "      st->ssc_end = end;\n"
+          "      effEnd = end;\n"
+          "      if (effEnd > mode->effEBands) effEnd = mode->effEBands;\n"
+          "   }\n\n   ALLOC(surround_dynalloc")
+    patch(enc, "      case CELT_SET_PREDICTION_REQUEST:\n",
+          "      case 10099:\n      {\n         opus_int32 *value = va_arg(ap, opus_int32*);\n         *value = st->ssc_end;\n      }\n      break;\n      case CELT_SET_PREDICTION_REQUEST:\n")
+
     # UHQ only. The decoder side of SSC widens big allocation boosts of the top bands (NOTES.md, "high-band offset copy"); keeping the
     # boosts of bands 18-20 below 1001 (1/8 bit) means that rule can never fire on our streams.
     patch(enc, "            && boost < cap[i]; j++)\n",
@@ -55,14 +82,14 @@ def main():
           "   if (mode->Fs >= 96000) {\n"
           "      /* SSC UHQ does not transmit the tf resolution */\n"
           "      for (i=start;i<end;i++)\n"
-          "         tf_res[i] = tf_select_table[LM][4*isTransient];\n"
+          "         tf_res[i] = 0;\n"
           "   } else\n"
           "      tf_decode(start, end, isTransient, tf_res, LM, dec);\n")
     patch(enc, "   tf_encode(start, end, isTransient, tf_res, LM, tf_select, enc);\n",
           "   if (mode->Fs >= 96000) {\n"
           "      /* SSC UHQ does not transmit the tf resolution */\n"
           "      for (i=start;i<end;i++)\n"
-          "         tf_res[i] = tf_select_table[LM][4*isTransient];\n"
+          "         tf_res[i] = 0;\n"
           "   } else\n"
           "      tf_encode(start, end, isTransient, tf_res, LM, tf_select, enc);\n")
 

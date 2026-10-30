@@ -237,7 +237,13 @@ event lists through Opus' 24-bit coder until the bytes match); `tools/ssc_combtr
 - Input scale: 24-bit integers (full scale 2^23) in int32, `<<4` inside = same internal scale as 16-bit `<<12`; float full scale 1.0 gives unity gain through the model decoder (gain 1.0001).
 - Buds firmware: config bit1 (0x02) means 96 kHz (`a2dp_scalable_config` helper 0x0c199430), bit3 24 bit (reset to 16 at 44.1 kHz).
 - Results (model decoder, 291 kbit/s): tones 38.0 dB (ours) vs 37.7 dB (Samsung), noise 1.0 vs 1.1, 40 kHz tone 11 vs 23 (Samsung boosts the top bands), chirp 16.9 vs 8-10.
-- NOT verified on the earbuds yet.
+- **tf_res is 0 also for transient frames** (not `tf_select_table[LM][4*isTransient]`): Samsung's kick-drum frames decode at 23 dB that way, 3 dB with the table value.
+- Our encoder uses long blocks only in UHQ: Opus' transient detector (tuned for 48 kHz) flagged every 96 kHz frame, smearing the bass with 8 short blocks (heard as "compressed bass").
+- Our encoder picks `end` per frame (last band with mean log2 energy > -4, between 19 and 22) and writes the level into the flags nibble. Coding the empty top bands cost 15 dB of SNR on
+  real music (15 -> 31 dB, equal to Samsung's encoder on the same 3.6 s of music, model decoder). 82% of Samsung's frames use end = 19.
+- Plugin pitfall found the hard way: `meson test` does not rebuild the plugin; run `meson compile` before installing.
+- Round trip on 40 s of two bass-heavy remixes (model decoder): 44.1/48 kHz 229k 28-29 dB, UHQ 291k 18-26 dB (broadband clicks in long blocks lose their HF part, that is the low figure).
+- NOT verified on the earbuds yet beyond: the first build had every frame as short blocks and sounded wrong.
 
 ## Buds3 Pro firmware (decoder side): `FOTA_R630XXU0AZG2.bin` (project root, 8.7 MB, build Jul 10 2026)
 - NOT encrypted. Starts with BES (Bestechnic) image header magic `0xcafecafe`, then Thumb code at file offset 0x28

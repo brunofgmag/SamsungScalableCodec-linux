@@ -255,8 +255,9 @@ int main(int argc, char **argv)
 					used = uhq->encode(enc, pcm + 2 * SSC_FRAME_SAMPLES * idx, SSC_FRAME_SAMPLES * 8, packet + total, sizeof(packet) - total, &out, &flush);
 					CHECK(used == SSC_FRAME_SAMPLES * 8 && out == 330 && flush == (fr == 1 ? NEED_FLUSH_ALL : NEED_FLUSH_NO),
 					      "UHQ packet %d frame %d: used %d out %zu flush %d", pkt, fr, used, out, flush);
-					CHECK(packet[total] == 0xff && packet[total + 1] == (0xe0 | (idx >> 4)) && packet[total + 2] == (((idx & 15) << 4) | 1) && packet[total + 3] == 0,
+					CHECK(packet[total] == 0xff && packet[total + 1] == (0xe0 | (idx >> 4)) && (packet[total + 2] & 0x0f) % 4 == 1 && (packet[total + 2] >> 4) == (idx & 15) && packet[total + 3] == 0,
 					      "UHQ frame %d header %02x %02x %02x %02x", idx, packet[total], packet[total + 1], packet[total + 2], packet[total + 3]);
+					opus_custom_decoder_ctl(dec, CELT_SET_END_BAND(22 - ((packet[total + 2] & 15) - 1) / 4));
 					opus_custom_decode_float(dec, packet + total + 4, (int)out - 4, dec_out + 2 * SSC_FRAME_SAMPLES * idx, SSC_FRAME_SAMPLES);
 					total += (int)out;
 				}

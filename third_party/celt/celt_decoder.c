@@ -1207,7 +1207,7 @@ int celt_decode_with_ec_dred(CELTDecoder * OPUS_RESTRICT st, const unsigned char
    if (mode->Fs >= 96000) {
       /* SSC UHQ does not transmit the tf resolution */
       for (i=start;i<end;i++)
-         tf_res[i] = tf_select_table[LM][4*isTransient];
+         tf_res[i] = 0;
    } else
       tf_decode(start, end, isTransient, tf_res, LM, dec);
 

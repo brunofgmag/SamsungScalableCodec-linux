@@ -155,6 +155,8 @@ static int encode_begin(const ssc_encoder *enc, const void *pcm, int preset, con
 /* Write the 4-byte header in front of the CELT payload of `n` bytes. */
 static int encode_end(ssc_encoder *enc, int n, int preset, int frame_bytes, uint8_t *out)
 {
+	int bands = 22;
+
 	if (n != frame_bytes - SSC_HEADER_SIZE)
 		return SSC_ERR_INTERNAL;
 
@@ -162,7 +164,9 @@ static int encode_end(ssc_encoder *enc, int n, int preset, int frame_bytes, uint
 	if (enc->uhq) {
 		/* e-class: 8-bit sequence over byte 1 (high) and byte 2 (low nibble first); byte 3 = info only (no band flags) */
 		out[1] = (uint8_t)(0xe0 | (enc->seq >> 4 & 0x0f));
-		out[2] = (uint8_t)((enc->seq & 0x0f) << 4 | 0x01);	/* flags nibble 1: all 22 bands are coded */
+		/* flags nibble 1 + 4 * (22 - bands): the sink learns how many of the 22 bands are coded (19 to 22) */
+		opus_custom_encoder_ctl(enc->celt, 10099, &bands);
+		out[2] = (uint8_t)((enc->seq & 0x0f) << 4 | (1 + 4 * (22 - bands)));
 		out[3] = (uint8_t)presets[preset].info;
 	} else {
 		out[1] = 0xee;

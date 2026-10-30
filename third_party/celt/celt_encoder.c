@@ -77,6 +77,7 @@ struct OpusCustomEncoder {
    int loss_rate;
    int lsb_depth;
    int lfe;
+   int ssc_end;	/* bands coded in the last frame (reported through control 10099) */
    int disable_inv;
    int arch;
 
@@ -1511,6 +1512,7 @@ int celt_encode_with_ec(CELTEncoder * OPUS_RESTRICT st, const opus_val16 * pcm, 
    eBands = mode->eBands;
    start = st->start;
    end = st->end;
+   st->ssc_end = end;
    hybrid = start != 0;
    tf_estimate = 0;
    if (nbCompressedBytes<2 || pcm==NULL)
@@ -1719,7 +1721,7 @@ int celt_encode_with_ec(CELTEncoder * OPUS_RESTRICT st, const opus_val16 * pcm, 
 
    isTransient = 0;
    shortBlocks = 0;
-   if (st->complexity >= 1 && !st->lfe)
+   if (st->complexity >= 1 && !st->lfe && mode->Fs < 96000)
    {
       /* Reduces the likelihood of energy instability on fricatives at low bitrate
          in hybrid mode. It seems like we still want to have real transients on vowels
@@ -1772,6 +1774,19 @@ int celt_encode_with_ec(CELTEncoder * OPUS_RESTRICT st, const opus_val16 * pcm, 
       }
    }
    amp2Log2(mode, effEnd, end, bandE, bandLogE, C);
+   if (mode->Fs >= 96000 && end == mode->nbEBands) {
+      int ee = 19, k;
+      for (k = end-1; k >= 19; k--) {
+         float e = 0;
+         int cc;
+         for (cc = 0; cc < C; cc++) e += bandLogE[k + cc*nbEBands];
+         if (e/C > -4.f) { ee = k+1; break; }
+      }
+      end = ee;
+      st->ssc_end = end;
+      effEnd = end;
+      if (effEnd > mode->effEBands) effEnd = mode->effEBands;
+   }
 
    ALLOC(surround_dynalloc, C*nbEBands, opus_val16);
    OPUS_CLEAR(surround_dynalloc, end);
@@ -1966,7 +1981,7 @@ int celt_encode_with_ec(CELTEncoder * OPUS_RESTRICT st, const opus_val16 * pcm, 
    if (mode->Fs >= 96000) {
       /* SSC UHQ does not transmit the tf resolution */
       for (i=start;i<end;i++)
-         tf_res[i] = tf_select_table[LM][4*isTransient];
+         tf_res[i] = 0;
    } else
       tf_encode(start, end, isTransient, tf_res, LM, tf_select, enc);
 
@@ -2475,6 +2490,12 @@ int opus_custom_encoder_ctl(CELTEncoder * OPUS_RESTRICT st, int request, ...)
          if (value<1 || value>st->mode->nbEBands)
             goto bad_arg;
          st->end = value;
+      }
+      break;
+      case 10099:
+      {
+         opus_int32 *value = va_arg(ap, opus_int32*);
+         *value = st->ssc_end;
       }
       break;
       case CELT_SET_PREDICTION_REQUEST:
