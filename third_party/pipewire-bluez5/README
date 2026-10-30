@@ -1,0 +1,6 @@
+Files copied unchanged from PipeWire 1.6.10 (spa/plugins/bluez5/): media-codecs.c, media-codecs.h,
+a2dp-codec-caps.h, bap-codec-caps.h, rtp.h. They define the interface between the PipeWire host and an A2DP codec
+plugin, and are needed to build a codec plugin outside the PipeWire source tree.
+License: MIT (SPDX tags in the files; media-codecs.c derives from BlueALSA, also MIT).
+The plugin must be built against the same PipeWire version as the one it is installed into: the structures
+(struct media_codec, SPA_VERSION_BLUEZ5_CODEC_MEDIA) are private to PipeWire and change between versions.

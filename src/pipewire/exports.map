@@ -1,0 +1,7 @@
+{
+  global:
+    spa_handle_factory_enum;
+    spa_log_topic_enum;
+  local:
+    *;
+};

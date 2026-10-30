@@ -1,0 +1,15 @@
+# build output and local environment
+/build/
+/.venv/
+__pycache__/
+*.pyc
+
+# reverse-engineering workspace: Samsung firmware, extracted partitions and libraries, reference sources, test vectors.
+# These are proprietary or very large and must never be published.
+/work/
+
+# firmware dropped in the project root
+/*.zip
+/*.bin
+/FOTA_*
+/SAMFW*
