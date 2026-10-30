@@ -5,14 +5,20 @@
 /*
  * Samsung Scalable Codec (SSC) A2DP source codec for the PipeWire bluez5 plugin.
  *
- * One A2DP packet is the RTP header followed by exactly one SSC frame (see NOTES.md). The format that the
- * PipeWire graph feeds the codec is interleaved stereo S16; a frame consumes 864 samples per channel.
+ * One A2DP packet is the RTP header followed by exactly one SSC frame (see NOTES.md). The PipeWire graph feeds
+ * the codec interleaved stereo F32, S32 or S16 (the codec has 24 bit of input precision, so the wider formats are
+ * preferred and go to the encoder without being rounded to 16 bit); a frame consumes 864 samples per channel.
  *
  * PipeWire loads codec plugins from a fixed list of names. This plugin exports the factory of the "aptx" slot
  * (api.bluez5.codec.media.aptx) and so it must be installed as libspa-codec-bluez5-aptx.so; it uses the aptx-hd
  * codec id only to be ordered above AAC in the host's preference list.
+ *
+ * Two codecs share the A2DP endpoint (like SBC and SBC-XQ): "ssc" (44.1/48 kHz, configuration byte 0x10|0x08) and
+ * "ssc_uhq" (96 kHz, configuration byte 0x02|0x08, frames of 9 ms, two per packet), the latter selectable as its
+ * own profile.
  */
 #include <errno.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
@@ -27,6 +33,7 @@
 
 #define SSC_CFG_RATE_48000	0x10
 #define SSC_CFG_RATE_44100	0x20
+#define SSC_CFG_UHQ		0x02	/* 96 kHz, 24 bit */
 #define SSC_CFG_NO_LIMIT	0x08	/* sink states no bitrate limitation; echoed back in the configuration */
 
 /* Codec delay in samples: the MDCT overlap */
@@ -43,8 +50,15 @@ struct impl {
 	ssc_encoder *enc;
 	int preset;
 	int rate;
-	int block_size;	/* bytes of S16 stereo PCM consumed per frame */
+	bool uhq;
+	int frames_per_packet;
+	int frames_in_packet;
+	uint32_t format;	/* SPA_AUDIO_FORMAT_* of the PCM handed to codec_encode */
+	int block_size;		/* bytes of PCM consumed per frame */
+	float conv[SSC_FRAME_SAMPLES * 2];	/* S32 input converted to float */
 };
+
+extern const struct media_codec a2dp_codec_ssc_uhq;
 
 static const struct media_codec_config ssc_rates[] = {
 	{ SSC_CFG_RATE_48000, 48000, 1 },
@@ -81,6 +95,14 @@ static int codec_select_config(const struct media_codec *codec, uint32_t flags,
 	    codec->vendor.codec_id != conf.info.codec_id)
 		return -ENOTSUP;
 
+	if (codec == &a2dp_codec_ssc_uhq) {
+		if (!(conf.config & SSC_CFG_UHQ))
+			return -ENOTSUP;
+		conf.config = SSC_CFG_UHQ | (conf.config & SSC_CFG_NO_LIMIT);
+		memcpy(config, &conf, sizeof(conf));
+		return sizeof(conf);
+	}
+
 	i = media_codec_select_config(ssc_rates, SPA_N_ELEMENTS(ssc_rates), conf.config,
 			info ? info->rate : A2DP_CODEC_DEFAULT_RATE);
 	if (i < 0)
@@ -113,18 +135,27 @@ static int codec_enum_config(const struct media_codec *codec, uint32_t flags,
 	spa_pod_builder_add(b,
 			SPA_FORMAT_mediaType,	SPA_POD_Id(SPA_MEDIA_TYPE_audio),
 			SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-			SPA_FORMAT_AUDIO_format, SPA_POD_Id(SPA_AUDIO_FORMAT_S16),
+			SPA_FORMAT_AUDIO_format, SPA_POD_CHOICE_ENUM_Id(4,
+								SPA_AUDIO_FORMAT_F32,
+								SPA_AUDIO_FORMAT_F32,
+								SPA_AUDIO_FORMAT_S32,
+								SPA_AUDIO_FORMAT_S16),
 			0);
 	spa_pod_builder_prop(b, SPA_FORMAT_AUDIO_rate, 0);
 
 	spa_pod_builder_push_choice(b, &f[1], SPA_CHOICE_None, 0);
 	choice = (struct spa_pod_choice *)spa_pod_builder_frame(b, &f[1]);
-	if (conf.config & SSC_CFG_RATE_48000) {
+	if (conf.config & SSC_CFG_UHQ) {
+		/* a UHQ configuration is 96 kHz only */
+		spa_pod_builder_int(b, 96000);
+		spa_pod_builder_int(b, 96000);
+		i = 1;
+	} else if (conf.config & SSC_CFG_RATE_48000) {
 		if (i++ == 0)
 			spa_pod_builder_int(b, 48000);
 		spa_pod_builder_int(b, 48000);
 	}
-	if (conf.config & SSC_CFG_RATE_44100) {
+	if (!(conf.config & SSC_CFG_UHQ) && (conf.config & SSC_CFG_RATE_44100)) {
 		if (i++ == 0)
 			spa_pod_builder_int(b, 44100);
 		spa_pod_builder_int(b, 44100);
@@ -149,6 +180,7 @@ static int preset_from_name(const char *s)
 	static const struct { const char *name; int preset; } names[] = {
 		{ "88k", SSC_PRESET_88K }, { "96k", SSC_PRESET_96K }, { "128k", SSC_PRESET_128K },
 		{ "192k", SSC_PRESET_192K }, { "229k", SSC_PRESET_229K },
+		{ "uhq152k", SSC_PRESET_UHQ_152K }, { "uhq291k", SSC_PRESET_UHQ_291K }, { "uhq584k", SSC_PRESET_UHQ_584K },
 	};
 	size_t i;
 
@@ -165,12 +197,25 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 	struct impl *this;
 	a2dp_ssc_t *conf = config;
 	const char *env;
-	int res = 0, preset = SSC_PRESET_229K;
+	int res = 0, preset, lowest, sample_size;
+	bool uhq;
 
 	if (config_len < sizeof(*conf) || info == NULL)
 		return NULL;
 	if (info->media_type != SPA_MEDIA_TYPE_audio || info->media_subtype != SPA_MEDIA_SUBTYPE_raw ||
-	    info->info.raw.format != SPA_AUDIO_FORMAT_S16 || info->info.raw.channels != 2) {
+	    info->info.raw.channels != 2) {
+		errno = EINVAL;
+		return NULL;
+	}
+	switch (info->info.raw.format) {
+	case SPA_AUDIO_FORMAT_F32:
+	case SPA_AUDIO_FORMAT_S32:
+		sample_size = 4;
+		break;
+	case SPA_AUDIO_FORMAT_S16:
+		sample_size = 2;
+		break;
+	default:
 		errno = EINVAL;
 		return NULL;
 	}
@@ -179,27 +224,40 @@ static void *codec_init(const struct media_codec *codec, uint32_t flags,
 	if (this == NULL)
 		return NULL;
 
-	this->rate = (conf->config & SSC_CFG_RATE_48000) ? 48000 : 44100;
-	/* Preset for experiments: SSC_PRESET=88k|96k|128k|192k|229k in the PipeWire environment */
+	uhq = (conf->config & SSC_CFG_UHQ) != 0;
+	this->uhq = uhq;
+	this->rate = uhq ? 96000 : (conf->config & SSC_CFG_RATE_48000) ? 48000 : 44100;
+	preset = uhq ? SSC_PRESET_UHQ_291K : SSC_PRESET_229K;
+	lowest = uhq ? SSC_PRESET_UHQ_152K : SSC_PRESET_88K;
+	/* Preset for experiments: SSC_PRESET=88k|96k|128k|192k|229k (44.1/48 kHz) or uhq152k|uhq291k|uhq584k in the PipeWire environment */
 	env = getenv("SSC_PRESET");
-	if (env != NULL && preset_from_name(env) >= 0)
+	if (env != NULL && preset_from_name(env) >= 0 && (ssc_preset_is_uhq(preset_from_name(env)) == 1) == uhq)
 		preset = preset_from_name(env);
 	/* the RTP header and one frame must fit in the L2CAP MTU */
-	while (preset > 0 && sizeof(struct rtp_header) + (size_t)ssc_frame_bytes(preset) > mtu)
+	while (preset > lowest && sizeof(struct rtp_header) + (size_t)ssc_frame_bytes(preset) > mtu)
 		preset--;
+	/* UHQ: like the phone, two 9 ms frames per packet when they fit (the sink takes that for the 152k and 291k presets) */
+	this->frames_per_packet = (uhq && preset != SSC_PRESET_UHQ_584K &&
+			sizeof(struct rtp_header) + 2 * (size_t)ssc_frame_bytes(preset) <= mtu) ? 2 : 1;
 	if (sizeof(struct rtp_header) + (size_t)ssc_frame_bytes(preset) > mtu) {
 		errno = EINVAL;
 		goto error;
 	}
 	this->preset = preset;
-	this->block_size = SSC_FRAME_SAMPLES * 2 * (int)sizeof(int16_t);
+	this->format = info->info.raw.format;
+	this->block_size = SSC_FRAME_SAMPLES * 2 * sample_size;
+	if (uhq && info->info.raw.rate != 96000) {
+		errno = EINVAL;
+		goto error;
+	}
 	this->enc = ssc_encoder_new(this->rate, 2, &res);
 	if (this->enc == NULL) {
 		errno = res == SSC_ERR_MEMORY ? ENOMEM : EINVAL;
 		goto error;
 	}
-	spa_log_info(log_, "SSC: rate %d, preset %d (%d bit/s, %d byte frames), mtu %zu",
-			this->rate, preset, ssc_preset_bitrate(preset), ssc_frame_bytes(preset), mtu);
+	spa_log_info(log_, "SSC: rate %d%s, format %s, preset %d (%d bit/s, %d byte frames, %d per packet), mtu %zu",
+			this->rate, uhq ? " (UHQ)" : "", this->format == SPA_AUDIO_FORMAT_F32 ? "F32" : this->format == SPA_AUDIO_FORMAT_S32 ? "S32" : "S16",
+			preset, ssc_preset_bitrate(preset), ssc_frame_bytes(preset), this->frames_per_packet, mtu);
 	return this;
 
 error:
@@ -224,8 +282,10 @@ static int codec_get_block_size(void *data)
 
 static int codec_start_encode(void *data, void *dst, size_t dst_size, uint16_t seqnum, uint32_t timestamp)
 {
+	struct impl *this = data;
 	struct rtp_header *header = dst;
 
+	this->frames_in_packet = 0;
 	if (dst_size < sizeof(*header))
 		return -EINVAL;
 	memset(header, 0, sizeof(*header));
@@ -248,12 +308,29 @@ static int codec_encode(void *data, const void *src, size_t src_size,
 	if (src == NULL || src_size < (size_t)this->block_size)
 		return 0;
 
-	n = ssc_encode(this->enc, src, this->preset, dst, dst_size);
+	switch (this->format) {
+	case SPA_AUDIO_FORMAT_F32:
+		n = ssc_encode_float(this->enc, src, this->preset, dst, dst_size);
+		break;
+	case SPA_AUDIO_FORMAT_S32: {
+		const int32_t *in = src;
+		int i;
+
+		for (i = 0; i < SSC_FRAME_SAMPLES * 2; i++)
+			this->conv[i] = (float)in[i] * (1.0f / 2147483648.0f);
+		n = ssc_encode_float(this->enc, this->conv, this->preset, dst, dst_size);
+		break;
+	}
+	default:
+		n = ssc_encode(this->enc, src, this->preset, dst, dst_size);
+		break;
+	}
 	if (SPA_UNLIKELY(n < 0))
 		return -EINVAL;
 
 	*dst_out = n;
-	*need_flush = NEED_FLUSH_ALL;	/* exactly one frame per packet */
+	this->frames_in_packet++;
+	*need_flush = this->frames_in_packet >= this->frames_per_packet ? NEED_FLUSH_ALL : NEED_FLUSH_NO;
 	return this->block_size;
 }
 
@@ -291,7 +368,29 @@ const struct media_codec a2dp_codec_ssc = {
 	.set_log = codec_set_log,
 };
 
+const struct media_codec a2dp_codec_ssc_uhq = {
+	/* an id of its own is needed for the profile list; aptx-ll is not available next to this plugin */
+	.id = SPA_BLUETOOTH_AUDIO_CODEC_APTX_LL,
+	.kind = MEDIA_CODEC_A2DP,
+	.codec_id = A2DP_CODEC_VENDOR,
+	.vendor = { .vendor_id = SSC_VENDOR_ID, .codec_id = SSC_CODEC_ID },
+	.name = "ssc_uhq",
+	.description = "Samsung Scalable Codec UHQ (96 kHz)",
+	.endpoint_name = "ssc",
+	.fill_caps = NULL,
+	.select_config = codec_select_config,
+	.enum_config = codec_enum_config,
+	.init = codec_init,
+	.deinit = codec_deinit,
+	.get_block_size = codec_get_block_size,
+	.start_encode = codec_start_encode,
+	.encode = codec_encode,
+	.get_delay = codec_get_delay,
+	.set_log = codec_set_log,
+};
+
 MEDIA_CODEC_EXPORT_DEF(
 	"aptx",
-	&a2dp_codec_ssc
+	&a2dp_codec_ssc,
+	&a2dp_codec_ssc_uhq
 );

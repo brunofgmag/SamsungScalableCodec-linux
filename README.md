@@ -17,12 +17,13 @@ those tables and to run the comparisons.
 
 ## Status
 
-* `libssc`: encoder for the 44.1/48 kHz stereo 16-bit "normal" mode at the five bitrate presets the Buds know
-  (88, 96, 128, 192, 229 kbit/s). Round-trip tests pass; against Samsung's encoder the quality is equal on tonal
+* `libssc`: encoder for the 44.1/48 kHz "normal"/HiFi mode (16-bit, float or 32-bit input) at the five bitrate presets the Buds know
+  (88, 96, 128, 192, 229 kbit/s) and for the 96 kHz **UHQ** mode (152, 291, 584 kbit/s; implemented from the emulated Samsung
+  encoder, round trip tested against the CELT model, not yet confirmed on earbuds). Round-trip tests pass; against Samsung's encoder the quality is equal on tonal
   signals and lower above ~17 kHz (see NOTES.md).
 * PipeWire plugin: builds, passes a host-style load test and streams to Galaxy Buds3 Pro (Fedora 44, PipeWire 1.6.10,
   WirePlumber 0.5) with the codec reported as `ssc` and no underruns. Other earbuds and distributions are untested.
-* Not done: HiFi (24-bit) and UHQ modes, 96 kHz, decoder (sink) side, the optional high-band hint in the frame header.
+* Not done: decoder (sink) side, Samsung's high-band allocation boost and per-frame bandwidth detection (we always code all 22 bands).
 
 ## Build and test
 
@@ -49,7 +50,8 @@ Reconnect the earbuds afterwards. Check which codec is in use:
 
     pw-dump | grep '"api.bluez5.codec"'
 
-Select a fixed bitrate for experiments with `SSC_PRESET=88k|96k|128k|192k|229k` in WirePlumber's environment.
+The plugin offers two profiles per earbud: `ssc` (44.1/48 kHz) and `ssc_uhq` (96 kHz, 24 bit; select it in the sound settings, PipeWire resamples).
+Select a fixed bitrate for experiments with `SSC_PRESET=88k|96k|128k|192k|229k` (or `uhq152k|uhq291k|uhq584k` for UHQ) in WirePlumber's environment.
 
 Remove:
 

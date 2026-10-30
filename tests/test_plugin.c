@@ -53,14 +53,14 @@ static void make_signal(int16_t *pcm, int frames, int rate)
 	}
 }
 
-static struct spa_audio_info make_info(int rate)
+static struct spa_audio_info make_info(int rate, uint32_t format)
 {
 	struct spa_audio_info info;
 
 	memset(&info, 0, sizeof(info));
 	info.media_type = SPA_MEDIA_TYPE_audio;
 	info.media_subtype = SPA_MEDIA_SUBTYPE_raw;
-	info.info.raw.format = SPA_AUDIO_FORMAT_S16;
+	info.info.raw.format = format;
 	info.info.raw.rate = rate;
 	info.info.raw.channels = 2;
 	return info;
@@ -100,7 +100,7 @@ int main(int argc, char **argv)
 	CHECK(handle->get_interface(handle, SPA_TYPE_INTERFACE_Bluez5CodecMedia, &iface) == 0 && iface != NULL, "no codec interface");
 	host = iface;
 	codec = host->codecs[0];
-	CHECK(codec != NULL && host->codecs[1] == NULL, "the plugin must export exactly one codec");
+	CHECK(codec != NULL && host->codecs[1] != NULL && host->codecs[2] == NULL, "the plugin must export the normal and the UHQ codec");
 	CHECK(spa_streq(codec->name, "ssc"), "codec name %s", codec->name);
 	CHECK(codec->codec_id == A2DP_CODEC_VENDOR && codec->vendor.vendor_id == SSC_VENDOR_ID && codec->vendor.codec_id == SSC_CODEC_ID, "wrong A2DP ids");
 	CHECK(codec->id == SPA_BLUETOOTH_AUDIO_CODEC_APTX_HD, "wrong ordering id");
@@ -134,13 +134,19 @@ int main(int argc, char **argv)
 		CHECK(codec->enum_config(codec, 0, config, 7, SPA_PARAM_EnumFormat, 1, &b, &param) == 0, "enum_config must stop after one format");
 	}
 
-	/* encoding */
-	for (int mtu_case = 0; mtu_case < 2; mtu_case++) {
-		size_t mtu = mtu_case == 0 ? 895 : 300;
-		int expect_frame = mtu_case == 0 ? 576 : 244;	/* with a 300 byte MTU the 229k preset (12 + 576) does not fit */
-		struct spa_audio_info info = make_info(48000);
+	/* encoding: every input format, and an MTU that is too small for the 229k preset (12 + 576 bytes) */
+	static const struct { uint32_t format; size_t mtu; int expect_frame; int sample_size; } cases[] = {
+		{ SPA_AUDIO_FORMAT_S16, 895, 576, 2 }, { SPA_AUDIO_FORMAT_S16, 300, 244, 2 },
+		{ SPA_AUDIO_FORMAT_F32, 895, 576, 4 }, { SPA_AUDIO_FORMAT_S32, 895, 576, 4 },
+	};
+	for (size_t mtu_case = 0; mtu_case < sizeof(cases) / sizeof(cases[0]); mtu_case++) {
+		size_t mtu = cases[mtu_case].mtu;
+		int expect_frame = cases[mtu_case].expect_frame;
+		int block = SSC_FRAME_SAMPLES * 2 * cases[mtu_case].sample_size;
+		struct spa_audio_info info = make_info(48000, cases[mtu_case].format);
 		void *enc = codec->init(codec, 0, config, 7, &info, NULL, mtu);
 		int16_t *pcm = malloc(sizeof(int16_t) * 2 * SSC_FRAME_SAMPLES * NFRAMES);
+		uint8_t *in_buf = malloc(block);
 		float *dec_out = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * NFRAMES);
 		int celt_err = 0;
 		OpusCustomMode *mode = opus_custom_mode_create(44100, SSC_FRAME_SAMPLES, &celt_err);
@@ -151,7 +157,7 @@ int main(int argc, char **argv)
 		if (!enc)
 			continue;
 		opus_custom_decoder_ctl(dec, CELT_SET_SIGNALLING(0));
-		CHECK(codec->get_block_size(enc) == SSC_FRAME_SAMPLES * 4, "block size %d", codec->get_block_size(enc));
+		CHECK(codec->get_block_size(enc) == block, "block size %d, expected %d", codec->get_block_size(enc), block);
 		make_signal(pcm, NFRAMES, 48000);
 		for (i = 0; i < NFRAMES; i++) {
 			uint8_t packet[1024];
@@ -162,8 +168,18 @@ int main(int argc, char **argv)
 			hdr = codec->start_encode(enc, packet, sizeof(packet), (uint16_t)(1000 + i), 864u * i);
 			CHECK(hdr == 12 && rtp->v == 2 && rtp->pt == 96 && ntohs(rtp->sequence_number) == 1000 + i && ntohl(rtp->timestamp) == 864u * i,
 			      "bad RTP header (len %d)", hdr);
-			used = codec->encode(enc, pcm + 2 * SSC_FRAME_SAMPLES * i, SSC_FRAME_SAMPLES * 4, packet + hdr, sizeof(packet) - hdr, &out, &flush);
-			CHECK(used == SSC_FRAME_SAMPLES * 4 && flush == NEED_FLUSH_ALL && (int)out == expect_frame,
+			for (int k = 0; k < SSC_FRAME_SAMPLES * 2; k++) {
+				int16_t v = pcm[2 * SSC_FRAME_SAMPLES * i + k];
+
+				if (cases[mtu_case].format == SPA_AUDIO_FORMAT_S16)
+					((int16_t *)in_buf)[k] = v;
+				else if (cases[mtu_case].format == SPA_AUDIO_FORMAT_S32)
+					((int32_t *)in_buf)[k] = (int32_t)v << 16;
+				else
+					((float *)in_buf)[k] = v * (1.0f / 32768.0f);
+			}
+			used = codec->encode(enc, in_buf, block, packet + hdr, sizeof(packet) - hdr, &out, &flush);
+			CHECK(used == block && flush == NEED_FLUSH_ALL && (int)out == expect_frame,
 			      "mtu %zu frame %d: consumed %d, flush %d, wrote %zu (expected %d)", mtu, i, used, flush, out, expect_frame);
 			CHECK(packet[hdr] == 0xff && packet[hdr + 1] == 0xee && (packet[hdr + 2] >> 4) == (i & 15), "bad frame header at %d", i);
 			CHECK(hdr + (int)out <= (int)mtu, "packet %d bytes exceeds the MTU %zu", hdr + (int)out, mtu);
@@ -177,7 +193,7 @@ int main(int argc, char **argv)
 				sig += x * x;
 				noise += (x - y) * (x - y);
 			}
-		printf("mtu %zu: %d byte frames, plugin round trip SNR %.1f dB\n", mtu, expect_frame, 10 * log10(sig / (noise + 1e-9)));
+		printf("format %u, mtu %zu: %d byte frames, plugin round trip SNR %.1f dB\n", cases[mtu_case].format, mtu, expect_frame, 10 * log10(sig / (noise + 1e-9)));
 		CHECK(10 * log10(sig / (noise + 1e-9)) > 22, "round trip SNR too low");
 		{
 			uint32_t enc_delay = 0, dec_delay = 99;
@@ -189,16 +205,78 @@ int main(int argc, char **argv)
 		opus_custom_decoder_destroy(dec);
 		opus_custom_mode_destroy(mode);
 		free(pcm);
+		free(in_buf);
 		free(dec_out);
 	}
 	{
-		struct spa_audio_info bad = make_info(48000);
+		struct spa_audio_info bad = make_info(48000, SPA_AUDIO_FORMAT_U8);
 		void *enc;
 
-		bad.info.raw.format = SPA_AUDIO_FORMAT_F32;
 		enc = codec->init(codec, 0, config, 7, &bad, NULL, 895);
-		CHECK(enc == NULL, "a non S16 stream must be refused");
+		CHECK(enc == NULL, "a format the codec does not take must be refused");
 		CHECK(codec->init(codec, 0, config, 7, &(struct spa_audio_info){ 0 }, NULL, 100) == NULL, "garbage info must be refused");
+	}
+	/* UHQ variant: 96 kHz, two 9 ms frames per packet */
+	{
+		const struct media_codec *uhq = host->codecs[1];
+		uint8_t uconf[A2DP_MAX_CAPS_SIZE], nouhq[7] = { 0x75, 0, 0, 0, 0x03, 0x01, 0x38 };
+		struct media_codec_audio_info want96 = { 96000, 2 };
+		struct spa_audio_info info = make_info(96000, SPA_AUDIO_FORMAT_F32);
+		float *pcm = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * 20), *dec_out = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * 20);
+		int celt_err = 0;
+		OpusCustomMode *mode = opus_custom_mode_create(96000, SSC_FRAME_SAMPLES, &celt_err);
+		OpusCustomDecoder *dec = opus_custom_decoder_create(mode, 2, &celt_err);
+		void *enc;
+		double sig = 0, noise = 0;
+
+		CHECK(spa_streq(uhq->name, "ssc_uhq") && uhq->id != codec->id && uhq->fill_caps == NULL, "UHQ codec definition");
+		res = uhq->select_config(uhq, 0, buds_caps, sizeof(buds_caps), &want96, NULL, uconf, NULL);
+		CHECK(res == 7 && uconf[6] == 0x0a, "UHQ select_config: %d, config byte %02x (expected 0a)", res, uconf[6]);
+		CHECK(uhq->select_config(uhq, 0, nouhq, 7, &want96, NULL, uconf, NULL) == -ENOTSUP, "peers without the UHQ bit must be refused");
+		res = uhq->select_config(uhq, 0, buds_caps, sizeof(buds_caps), &want96, NULL, uconf, NULL);
+		enc = uhq->init(uhq, 0, uconf, 7, &info, NULL, 895);
+		CHECK(enc != NULL, "UHQ init");
+		if (enc) {
+			opus_custom_decoder_ctl(dec, CELT_SET_SIGNALLING(0));
+			for (long n = 0; n < 20L * SSC_FRAME_SAMPLES; n++) {
+				double t = (double)n / 96000;
+
+				pcm[2 * n] = (float)(0.2 * sin(2 * M_PI * 330 * t) + 0.1 * sin(2 * M_PI * 5200 * t));
+				pcm[2 * n + 1] = (float)(0.2 * sin(2 * M_PI * 660 * t));
+			}
+			for (int pkt = 0; pkt < 10; pkt++) {
+				uint8_t packet[2048];
+				int hdr = uhq->start_encode(enc, packet, sizeof(packet), (uint16_t)pkt, 0), total = hdr;
+
+				for (int fr = 0; fr < 2; fr++) {
+					size_t out = 0;
+					int flush = -1, used, idx = 2 * pkt + fr;
+
+					used = uhq->encode(enc, pcm + 2 * SSC_FRAME_SAMPLES * idx, SSC_FRAME_SAMPLES * 8, packet + total, sizeof(packet) - total, &out, &flush);
+					CHECK(used == SSC_FRAME_SAMPLES * 8 && out == 330 && flush == (fr == 1 ? NEED_FLUSH_ALL : NEED_FLUSH_NO),
+					      "UHQ packet %d frame %d: used %d out %zu flush %d", pkt, fr, used, out, flush);
+					CHECK(packet[total] == 0xff && packet[total + 1] == (0xe0 | (idx >> 4)) && packet[total + 2] == (((idx & 15) << 4) | 1) && packet[total + 3] == 0,
+					      "UHQ frame %d header %02x %02x %02x %02x", idx, packet[total], packet[total + 1], packet[total + 2], packet[total + 3]);
+					opus_custom_decode_float(dec, packet + total + 4, (int)out - 4, dec_out + 2 * SSC_FRAME_SAMPLES * idx, SSC_FRAME_SAMPLES);
+					total += (int)out;
+				}
+				CHECK(total == 12 + 660, "UHQ packet size %d", total);
+			}
+			for (long n = 8L * SSC_FRAME_SAMPLES; n < 20L * SSC_FRAME_SAMPLES; n++)
+				for (int c = 0; c < 2; c++) {
+					double x = pcm[2 * (n - DELAY) + c], y = dec_out[2 * n + c];
+
+					sig += x * x;
+					noise += (x - y) * (x - y);
+				}
+			printf("UHQ plugin round trip SNR %.1f dB\n", 10 * log10(sig / (noise + 1e-30)));
+			CHECK(10 * log10(sig / (noise + 1e-30)) > 25, "UHQ round trip SNR too low");
+			uhq->deinit(enc);
+		}
+		opus_custom_decoder_destroy(dec);
+		opus_custom_mode_destroy(mode);
+		free(pcm);
+		free(dec_out);
 	}
 	if (handle->clear)
 		handle->clear(handle);

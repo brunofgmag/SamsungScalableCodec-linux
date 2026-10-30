@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2026 lori28167
 """Log the arguments of every ssc_comb_filter call made by the emulated encoder (pitch pre-filter): periods, gains, tapsets.
 
-    ssc_combtrace.py LIB.so [--frames 14] [--f0 190] [--rate 229000]
+    ssc_combtrace.py LIB.so [--fs 44100] [--bits 16] [--frames 14] [--f0 190] [--rate 229000]
 """
 import argparse
 import math
@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--frames", type=int, default=14)
     ap.add_argument("--f0", type=float, default=190.0)
     ap.add_argument("--rate", type=int, default=229000)
+    ap.add_argument("--bits", type=int, default=16, help="16, 24 or 34 (UHQ)")
     a = ap.parse_args()
     o = Oracle(a.lib)
     calls = []
@@ -41,7 +42,7 @@ def main():
 
     o.uc.hook_add(UC_HOOK_CODE, hook, begin=o.syms["ssc_comb_filter"], end=o.syms["ssc_comb_filter"])
     err = o.alloc(size=4)
-    st = o.call("ssc_encoder_create", a.fs, 2, 16, err)
+    st = o.call("ssc_encoder_create", a.fs, 2, a.bits, err)
     out = o.alloc(size=16384)
     n = 0
     for f in range(a.frames):
@@ -50,7 +51,7 @@ def main():
             t = n / a.fs
             v = sum(8000.0 / k * math.sin(2 * math.pi * a.f0 * k * t) for k in range(1, 12))
             for c in range(2):
-                pcm += struct.pack("<i", int(v))
+                pcm += struct.pack("<i", int(v) << (0 if a.bits == 16 else 8))
             n += 1
         calls.clear()
         o.call("ssc_encode", st, o.alloc(bytes(pcm)), 864, out, a.rate)

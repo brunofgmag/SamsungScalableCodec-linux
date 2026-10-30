@@ -34,6 +34,9 @@
 #ifndef SSC_USE_ALLOC_B
 #define SSC_USE_ALLOC_B 1
 #endif
+#ifndef SSC96_USE_ALLOC_B
+#define SSC96_USE_ALLOC_B 1
+#endif
 #endif
 
 #include "celt.h"
@@ -291,7 +294,7 @@ CELTMode *opus_custom_mode_create(opus_int32 Fs, int frame_size, int *error)
       return NULL;
    }
 
-   if ((opus_int32)frame_size*75 >= Fs && (frame_size%16)==0)
+   if ((frame_size%16)==0)
    {
      LM = 3;
    } else if ((opus_int32)frame_size*150 >= Fs && (frame_size%8)==0)
@@ -353,7 +356,7 @@ CELTMode *opus_custom_mode_create(opus_int32 Fs, int frame_size, int *error)
    res = (mode->Fs+mode->shortMdctSize)/(2*mode->shortMdctSize);
 
    { opus_int16 *eb = (opus_int16*)opus_alloc(sizeof(ssc_ebands));
-     memcpy(eb, ssc_ebands, sizeof(ssc_ebands)); mode->eBands = eb; mode->nbEBands = SSC_NB_EBANDS; }
+     memcpy(eb, Fs >= 96000 ? ssc96_ebands : ssc_ebands, sizeof(ssc_ebands)); mode->eBands = eb; mode->nbEBands = SSC_NB_EBANDS; }
    if (mode->eBands==NULL)
       goto failure;
 #if !defined(SMALL_FOOTPRINT)
@@ -373,7 +376,8 @@ CELTMode *opus_custom_mode_create(opus_int32 Fs, int frame_size, int *error)
    mode->overlap = ((mode->shortMdctSize>>2)<<2);
 
    { unsigned char *av = (unsigned char*)opus_alloc(sizeof(ssc_alloc));
-     memcpy(av, SSC_USE_ALLOC_B ? ssc_alloc_b : ssc_alloc, sizeof(ssc_alloc)); mode->allocVectors = av; mode->nbAllocVectors = SSC_NB_ALLOC_VECTORS; }
+     memcpy(av, Fs >= 96000 ? (SSC96_USE_ALLOC_B ? ssc96_alloc_b : ssc96_alloc) : (SSC_USE_ALLOC_B ? ssc_alloc_b : ssc_alloc),
+            sizeof(ssc_alloc)); mode->allocVectors = av; mode->nbAllocVectors = SSC_NB_ALLOC_VECTORS; }
    if (mode->allocVectors==NULL)
       goto failure;
 
@@ -399,8 +403,9 @@ CELTMode *opus_custom_mode_create(opus_int32 Fs, int frame_size, int *error)
    mode->logN = logN;
 
    compute_pulse_cache(mode, mode->maxLM);
-   { int ci; for (ci = 0; ci < (int)(sizeof(ssc_cache_index)/sizeof(ssc_cache_index[0])); ci++)
-        ((opus_int16*)mode->cache.index)[ci] = ssc_cache_index[ci]; }
+   { int ci; const short *cidx = Fs >= 96000 ? ssc96_cache_index : ssc_cache_index;
+     for (ci = 0; ci < (int)(sizeof(ssc_cache_index)/sizeof(ssc_cache_index[0])); ci++)
+        ((opus_int16*)mode->cache.index)[ci] = cidx[ci]; }
    /* SSC applies no pre-emphasis (ssc_preemphasis only shifts the samples), so no de-emphasis either */
    mode->preemph[0] = 0; mode->preemph[1] = 0;
 

@@ -1963,7 +1963,12 @@ int celt_encode_with_ec(CELTEncoder * OPUS_RESTRICT st, const opus_val16 * pcm, 
          C, LM, nbAvailableBytes, st->force_intra,
          &st->delayedIntra, st->complexity >= 4, st->loss_rate, st->lfe);
 
-   tf_encode(start, end, isTransient, tf_res, LM, tf_select, enc);
+   if (mode->Fs >= 96000) {
+      /* SSC UHQ does not transmit the tf resolution */
+      for (i=start;i<end;i++)
+         tf_res[i] = tf_select_table[LM][4*isTransient];
+   } else
+      tf_encode(start, end, isTransient, tf_res, LM, tf_select, enc);
 
    if (ec_tell(enc)+4<=total_bits)
    {
@@ -2034,7 +2039,7 @@ int celt_encode_with_ec(CELTEncoder * OPUS_RESTRICT st, const opus_val16 * pcm, 
       dynalloc_loop_logp = dynalloc_logp;
       boost = 0;
       for (j = 0; tell+(dynalloc_loop_logp<<BITRES) < total_bits-total_boost
-            && boost < cap[i]; j++)
+            && boost < cap[i] && !(i >= 18 && i <= 20 && boost+quanta >= 1001); j++)
       {
          int flag;
          flag = j<offsets[i];

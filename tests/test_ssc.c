@@ -62,13 +62,13 @@ static double snr_db(const int16_t *in, const float *out, int frames)
 
 static void test_layout_and_roundtrip(int rate)
 {
-	static const double min_snr[SSC_PRESET_COUNT] = { 20, 20, 23, 28, 30 };
+	static const double min_snr[SSC_PRESET_UHQ_152K] = { 20, 20, 23, 28, 30 };
 	int16_t *pcm = malloc(sizeof(int16_t) * 2 * SSC_FRAME_SAMPLES * NFRAMES);
 	float *dec_out = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * NFRAMES);
 	int preset;
 
 	make_signal(pcm, NFRAMES, rate);
-	for (preset = 0; preset < SSC_PRESET_COUNT; preset++) {
+	for (preset = 0; preset < SSC_PRESET_UHQ_152K; preset++) {
 		int err = -1, celt_err = 0, i, fb = ssc_frame_bytes(preset);
 		ssc_encoder *enc = ssc_encoder_new(rate, 2, &err);
 		OpusCustomMode *mode = opus_custom_mode_create(44100, SSC_FRAME_SAMPLES, &celt_err);
@@ -144,10 +144,155 @@ static void test_errors(void)
 	ssc_encoder_free(enc);
 }
 
+/* The float entry point must give the very same bits as the 16 bit one for 16 bit data, and must keep what 16 bit rounding loses. */
+static void test_float_input(void)
+{
+	enum { FRAMES = 30 };
+	const int preset = SSC_PRESET_229K, fb = ssc_frame_bytes(SSC_PRESET_229K);
+	int16_t *pcm = malloc(sizeof(int16_t) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	float *flt = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	float *quiet = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	float *dec_out = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	int16_t *rounded = malloc(sizeof(int16_t) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	ssc_encoder *e16 = ssc_encoder_new(48000, 2, NULL), *ef = ssc_encoder_new(48000, 2, NULL);
+	uint8_t a[SSC_MAX_FRAME_SIZE], b[SSC_MAX_FRAME_SIZE];
+	long n, i;
+	int pass;
+
+	make_signal(pcm, FRAMES, 48000);
+	for (n = 0; n < 2L * SSC_FRAME_SAMPLES * FRAMES; n++)
+		flt[n] = pcm[n] * (1.0f / 32768.0f);
+	for (i = 0; i < FRAMES; i++) {
+		int n16 = ssc_encode(e16, pcm + 2 * SSC_FRAME_SAMPLES * i, preset, a, sizeof(a));
+		int nf = ssc_encode_float(ef, flt + 2 * SSC_FRAME_SAMPLES * i, preset, b, sizeof(b));
+
+		CHECK(n16 == fb && nf == fb, "frame %ld: lengths %d and %d", i, n16, nf);
+		CHECK(memcmp(a, b, fb) == 0, "frame %ld: float input differs from the same data as 16 bit", i);
+	}
+	ssc_encoder_free(e16);
+	ssc_encoder_free(ef);
+
+	/* a signal around one 16 bit step (-90 dBFS): the float path codes it, the rounded copy is mostly quantisation noise */
+	for (n = 0; n < (long)FRAMES * SSC_FRAME_SAMPLES; n++) {
+		double t = (double)n / 48000;
+		double l = 0.9 * sin(2 * M_PI * 440 * t), r = 1.3 * sin(2 * M_PI * 1000 * t) + 0.5 * sin(2 * M_PI * 3100 * t);
+
+		quiet[2 * n] = (float)(l / 32768.0);
+		quiet[2 * n + 1] = (float)(r / 32768.0);
+		rounded[2 * n] = (int16_t)lrint(l);
+		rounded[2 * n + 1] = (int16_t)lrint(r);
+	}
+	for (pass = 0; pass < 2; pass++) {
+		int celt_err = 0;
+		OpusCustomMode *mode = opus_custom_mode_create(44100, SSC_FRAME_SAMPLES, &celt_err);
+		OpusCustomDecoder *dec = opus_custom_decoder_create(mode, 2, &celt_err);
+		ssc_encoder *enc = ssc_encoder_new(48000, 2, NULL);
+		double sig = 0, noise = 0, snr;
+
+		opus_custom_decoder_ctl(dec, CELT_SET_SIGNALLING(0));
+		for (i = 0; i < FRAMES; i++) {
+			int len = pass == 0 ? ssc_encode_float(enc, quiet + 2 * SSC_FRAME_SAMPLES * i, preset, a, sizeof(a))
+					    : ssc_encode(enc, rounded + 2 * SSC_FRAME_SAMPLES * i, preset, a, sizeof(a));
+
+			CHECK(len == fb, "quiet frame %ld: length %d", i, len);
+			opus_custom_decode_float(dec, a + SSC_HEADER_SIZE, fb - SSC_HEADER_SIZE, dec_out + 2 * SSC_FRAME_SAMPLES * i, SSC_FRAME_SAMPLES);
+		}
+		for (n = (long)WARMUP * SSC_FRAME_SAMPLES; n < (long)FRAMES * SSC_FRAME_SAMPLES; n++) {
+			int c;
+
+			for (c = 0; c < 2; c++) {
+				double x = quiet[2 * (n - DELAY) + c], y = dec_out[2 * n + c];
+
+				sig += x * x;
+				noise += (x - y) * (x - y);
+			}
+		}
+		snr = 10 * log10(sig / (noise + 1e-30));
+		printf("-90 dBFS tones, %s input: round trip SNR %.1f dB\n", pass == 0 ? "float" : "16 bit rounded", snr);
+		if (pass == 0)
+			CHECK(snr >= 18, "float input below the 16 bit step: SNR %.1f dB", snr);
+		else
+			CHECK(snr < 12, "rounded input was expected to lose the signal, SNR %.1f dB", snr);
+		ssc_encoder_free(enc);
+		opus_custom_decoder_destroy(dec);
+		opus_custom_mode_destroy(mode);
+	}
+	free(pcm);
+	free(flt);
+	free(quiet);
+	free(dec_out);
+	free(rounded);
+}
+
+/* UHQ: 96 kHz, 9 ms frames, e-class headers with an 8-bit sequence number */
+static void test_uhq(void)
+{
+	static const int presets[3] = { SSC_PRESET_UHQ_152K, SSC_PRESET_UHQ_291K, SSC_PRESET_UHQ_584K };
+	static const int frame_len[3] = { 174, 330, 660 }, info[3] = { 6, 0, 3 };
+	static const double min_snr[3] = { 25, 33, 36 };
+	enum { FRAMES = 300 };
+	int16_t *pcm = malloc(sizeof(int16_t) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	float *flt = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	float *dec_out = malloc(sizeof(float) * 2 * SSC_FRAME_SAMPLES * FRAMES);
+	uint8_t frame[1024];
+	int k, err = -1;
+	long n;
+
+	make_signal(pcm, FRAMES, 96000);
+	for (n = 0; n < 2L * SSC_FRAME_SAMPLES * FRAMES; n++)
+		flt[n] = pcm[n] * (1.0f / 32768.0f);
+	CHECK(ssc_encoder_new(96000, 2, &err) != NULL && err == SSC_OK, "96 kHz encoder creation");
+	for (k = 0; k < 3; k++) {
+		int celt_err = 0, i, preset = presets[k];
+		ssc_encoder *enc = ssc_encoder_new(96000, 2, NULL);
+		OpusCustomMode *mode = opus_custom_mode_create(96000, SSC_FRAME_SAMPLES, &celt_err);
+		OpusCustomDecoder *dec = opus_custom_decoder_create(mode, 2, &celt_err);
+		double sig = 0, noise = 0;
+
+		CHECK(ssc_preset_is_uhq(preset) == 1 && ssc_frame_bytes(preset) == frame_len[k], "preset %d table", preset);
+		opus_custom_decoder_ctl(dec, CELT_SET_SIGNALLING(0));
+		for (i = 0; i < FRAMES; i++) {
+			int len = ssc_encode_float(enc, flt + 2 * SSC_FRAME_SAMPLES * i, preset, frame, sizeof(frame));
+
+			CHECK(len == frame_len[k], "uhq preset %d frame %d: length %d", preset, i, len);
+			CHECK(frame[0] == 0xff && frame[1] == (0xe0 | (i >> 4 & 15)) && frame[2] == (((i & 15) << 4) | 1) && frame[3] == info[k],
+			      "uhq preset %d frame %d: bad header %02x %02x %02x %02x", preset, i, frame[0], frame[1], frame[2], frame[3]);
+			opus_custom_decode_float(dec, frame + SSC_HEADER_SIZE, len - SSC_HEADER_SIZE, dec_out + 2 * SSC_FRAME_SAMPLES * i, SSC_FRAME_SAMPLES);
+		}
+		for (n = (long)WARMUP * SSC_FRAME_SAMPLES; n < (long)FRAMES * SSC_FRAME_SAMPLES; n++) {
+			int c;
+
+			for (c = 0; c < 2; c++) {
+				double x = flt[2 * (n - DELAY) + c], y = dec_out[2 * n + c];
+
+				sig += x * x;
+				noise += (x - y) * (x - y);
+			}
+		}
+		printf("UHQ preset %d (%d byte frames): round trip SNR %.1f dB\n", preset, frame_len[k], 10 * log10(sig / (noise + 1e-30)));
+		CHECK(10 * log10(sig / (noise + 1e-30)) >= min_snr[k], "uhq preset %d: SNR too low", preset);
+		CHECK(ssc_encode(enc, pcm, SSC_PRESET_229K, frame, sizeof(frame)) == SSC_ERR_ARGUMENT, "normal preset on a 96 kHz encoder must be refused");
+		ssc_encoder_free(enc);
+		opus_custom_decoder_destroy(dec);
+		opus_custom_mode_destroy(mode);
+	}
+	{
+		ssc_encoder *e48 = ssc_encoder_new(48000, 2, NULL);
+
+		CHECK(ssc_encode(e48, pcm, SSC_PRESET_UHQ_291K, frame, sizeof(frame)) == SSC_ERR_ARGUMENT, "UHQ preset on a 48 kHz encoder must be refused");
+		ssc_encoder_free(e48);
+	}
+	free(pcm);
+	free(flt);
+	free(dec_out);
+}
+
 int main(void)
 {
 	test_errors();
 	test_determinism_and_reset();
+	test_float_input();
+	test_uhq();
 	test_layout_and_roundtrip(44100);
 	test_layout_and_roundtrip(48000);
 	if (failures)

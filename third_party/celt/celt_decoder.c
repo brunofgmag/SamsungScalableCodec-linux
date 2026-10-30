@@ -1204,7 +1204,12 @@ int celt_decode_with_ec_dred(CELTDecoder * OPUS_RESTRICT st, const unsigned char
          intra_ener, dec, C, LM);
 
    ALLOC(tf_res, nbEBands, int);
-   tf_decode(start, end, isTransient, tf_res, LM, dec);
+   if (mode->Fs >= 96000) {
+      /* SSC UHQ does not transmit the tf resolution */
+      for (i=start;i<end;i++)
+         tf_res[i] = tf_select_table[LM][4*isTransient];
+   } else
+      tf_decode(start, end, isTransient, tf_res, LM, dec);
 
    tell = ec_tell(dec);
    spread_decision = SPREAD_NORMAL;

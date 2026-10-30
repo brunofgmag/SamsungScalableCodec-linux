@@ -119,6 +119,9 @@ A *configuration* is valid if bit1 or bit2 is set (no rate bit needed), otherwis
 `A2DP_VendorGetSscType`: parse fails -> 0x80; **bit1 (0x02) -> 0x400 (UHQ)**; else rate 0x80 (96 kHz) -> 0x200; else **bit2 (0x04) -> 0x100 (HiFi, 24-bit/48k)**; else 0x80 (normal).
 `A2DP_VendorGetTrackBitsPerSampleSsc`: bit1 (UHQ) or 96 kHz -> **0x22**; else bit2 -> 24 (0x18); else 16. (Meaning of 0x22 still unknown; likely selects the encoder's UHQ input mode.)
 `A2DP_VendorGetBitRateSsc` returns a constant 192000.
+`A2DP_VendorGetTrackSampleRateSsc` (S23, 0x6dea14): **bit1 (UHQ) returns 96000 Hz regardless of the rate bits**; otherwise bit2 (HiFi) returns 48000; otherwise the single rate bit
+(0x10 -> 48000, 0x20 -> 44100, 0x40 -> 32000, 0x80 -> 96000). So UHQ is the 96 kHz / 24-bit mode: it uses the e-class presets (330/660/174-byte frames, one or two frames per packet,
+8-bit sequence in bytes 1-2) and the second mode stored at mode+0x80 of the library (Fs=96000). The Buds3 Pro advertise bit1 but not the 0x80 rate bit, because UHQ already implies 96 kHz.
 => Buds3 Pro 0x3E = 44.1 kHz + 48 kHz (0x20|0x10) + bit3 (0x08, no bitrate limitation) + HiFi (0x04) + **UHQ (0x02)**; **no 96 kHz, no 32 kHz**.
 => A source that wants UHQ should configure byte 9 = 0x02 (optionally `| 0x08`); HiFi = 0x04; normal = one rate bit (0x10 or 0x20) `| 0x08`.
 S23 stack function addresses (libbluetooth_jni.so, symbol table recovered from `.gnu_debugdata` -> xz -> ELF): `A2DP_ParseInfoSsc` 0x6dde24, `A2DP_VendorGetSscType` 0x6ded9c,
@@ -199,6 +202,42 @@ Main-core functions: frame validation `0x0c0af1e4`, `preparse_packet` `0x0c0af2f
 - Verified on hardware (Galaxy Buds3 Pro, 2026-10-30, Fedora 44, PipeWire 1.6.10): the Buds accept configuration byte 0x18 (48 kHz), the node runs with codec `ssc`, 48 kHz S16 stereo and
   no underruns, with the flags nibble fixed at 1 and the RTP marker bit 0, at the default preset (229k unless the MTU forces a lower one). Still unknown: 44.1 kHz (0x28) and the other presets on the
   sink, and what the 2-bit high-band hint does there.
+
+## HiFi (24 bit) and how the Buds read the configuration byte (firmware `a2dp_scalable_config` 0x0c19958c, helper 0x0c199430)
+The Buds3 Pro decode `elements[6]` (the SSC byte) like this (Thumb code in the main-core image, `tools/bes_dis.py`):
+- sample rate code: bit7 or bit1 -> 96 kHz (code 8); else bit6 -> 32 kHz; else bit2 -> 48 kHz (code 0x10); else bit5 -> 44.1 kHz; else bit4 -> 48 kHz, none -> 44.1 kHz.
+- **bit3 (0x08) = 24 bit per sample** ("CodecCfg bits per sampe = 24"), reset to 16 when the rate is 44.1 kHz ("reset bit per sample to 16 when samplerate is 44.1k"); bit3 clear = 16 bit.
+  The phone calls this bit "no bitrate limitation" and echoes the sink's bit; to the sink it is the 24 bit output flag.
+- So `0x18` (48 kHz + bit3, what the plugin sends) and the phone's HiFi value `0x0c` (bit2 | bit3) give the very same sink state: 48 kHz, 24 bit output. HiFi changes nothing in the bitstream.
+- Oracle (S23 library, 48 kHz, every preset): `bits=24` with 24-bit input scaled by 256 gives exactly the same frames as `bits=16` with the 16-bit input. The 24 bit mode only adds input precision.
+- Plugin consequence: no separate HiFi profile is needed. The plugin offers F32 (preferred), S32 and S16 to the graph and the float entry point `ssc_encode_float` feeds the
+  float CELT encoder directly (full scale = +-1.0, same scale as the 16 bit path: x16/32768). Test: a -90 dBFS two-tone signal round-trips at 34 dB SNR as float, 9 dB after rounding to 16 bit.
+- The Buds' own capability selector (`a2dp_select_scalable_capability`, 0x0c16b520, used when the Buds are the source) builds 96 kHz = `0x80|bit3`, HiFi = `0x04|bit3`, 44.1 kHz = `0x20|bit3`, 48 kHz = `0x10|bit3`.
+
+## UHQ (96 kHz, 24 bit): what the S23 encoder does at Fs=96000, bits=0x22 (validated by decoding its frames with the CELT model)
+Method: `tools/ssc_vectors.py` (exact-integer PCM, float32 stored) -> Samsung frames; decoder = vendored CELT with the tables below; symbol-level comparison
+with replayed range-coder traces (the encoder works on one `ec_enc` object and re-writes trial passes, so the final stream is rebuilt by replaying candidate
+event lists through Opus' 24-bit coder until the bytes match); `tools/ssc_combtrace.py`, MDCT/allocation probes in the Unicorn oracle.
+- It is the same CELT with the **second mode of the library** (mode struct +0x80): Fs=96000, frame 864 (**9 ms**), 8 short blocks of 108, overlap 108, the same 22 bands
+  but `eBands = 0 1 2 3 4 5 6 7 8 9 10 11 12 14 16 20 24 30 36 54 72 90 108` (last band 40-48 kHz), allocation **table B of that mode** (table A is the same as for 44.1 kHz and
+  wrong), pulse cache index equal to what Opus computes. All in `third_party/celt/ssc_tables.h` (`ssc96_*`). Opus would pick 4 short blocks for 864/96 kHz: forced to 8.
+- Forward MDCT (window, scale, overlap) is stock Opus: Samsung's MDCT output equals `clt_mdct_forward` of its own input buffer exactly. PVQ enumeration identical (596 vectors).
+- **No tf symbols at all** (tf_res = `tf_select_table[LM][4*isTransient]`).
+- **The number of coded bands varies per frame and is signalled in the frame header**: `end = 22 - level`, level = (low nibble of byte 2 - 1) / 4 (nibble 1,5,9,d). The encoder
+  takes it from the last band whose L+R energy is above about -4 (log2, Q10 -4096..-3000), minimum 19 bands. A decoder that assumes 22 bands loses sync from the second frame on.
+  (The same field exists in the 44.1/48 kHz frames; this is the "high-band hint" noted earlier.)
+- Byte 3 bits 7..5 (called v) are NOT the cause of anything we need: Samsung writes 0 for ordinary music; noise gives 7. We write 0 for UHQ frames.
+- **High-band offset copy** (encoder `0xeb60..0xecd4`, decoder must do the same): after the dynalloc flags, for k = 19, 20, 21 (k < end): if `offsets[k] == 0` and `offsets[k-1] >= 1001`
+  and (`E[k] > 7000` or `E[k] > E[k-1]/2`) then `offsets[k] = offsets[k-1]` (cascading). E is the encoder's mean L/R log2 energy (Q10); a decoder using the decoded energies
+  (mean of both channels, threshold 7.0) reproduces the encoder's symbols on 39 of 40 frames of a sweep. The exact decoder-side rule is not known. Our encoder avoids the question: boosts of
+  bands 18-20 are kept below 1001 (1/8 bit), so the rule can never fire (`tools/make_ssc_celt.py`).
+- Packets / sink: e-class frame header `FF, E0|seq>>4, (seq&15)<<4 | nibble, info`; the sink's UHQ parser (firmware 0x0c0ac828) accepts info e0 (330 B), e3 (660 B), e6 (174 B), 1 frame per packet or,
+  for e0 with packet >= 504 B and e6 with >= 348 B, two frames (the phone sends two, 18 ms). Presets (Samsung encoder): e6 152 kbit/s, e0 291, e3 584 (e1 308, e2 442, e4 886, e5 250 and f4/f5/f6 exist
+  in the encoder but are not accepted by that parser). Sequence number is 8 bit (byte 1 low nibble = high half).
+- Input scale: 24-bit integers (full scale 2^23) in int32, `<<4` inside = same internal scale as 16-bit `<<12`; float full scale 1.0 gives unity gain through the model decoder (gain 1.0001).
+- Buds firmware: config bit1 (0x02) means 96 kHz (`a2dp_scalable_config` helper 0x0c199430), bit3 24 bit (reset to 16 at 44.1 kHz).
+- Results (model decoder, 291 kbit/s): tones 38.0 dB (ours) vs 37.7 dB (Samsung), noise 1.0 vs 1.1, 40 kHz tone 11 vs 23 (Samsung boosts the top bands), chirp 16.9 vs 8-10.
+- NOT verified on the earbuds yet.
 
 ## Buds3 Pro firmware (decoder side): `FOTA_R630XXU0AZG2.bin` (project root, 8.7 MB, build Jul 10 2026)
 - NOT encrypted. Starts with BES (Bestechnic) image header magic `0xcafecafe`, then Thumb code at file offset 0x28
