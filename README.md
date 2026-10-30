@@ -41,7 +41,10 @@ takes the `aptx` slot, which Fedora does not ship. It is installed as `libspa-co
 itself as the codec `ssc`; it borrows the aptx-hd codec id so that PipeWire prefers it over AAC. If you also install a
 real aptx plugin, the two cannot coexist.
 
-Install (needs root):
+The easy way: `./install.sh` builds, runs the tests, installs (sudo) and restarts WirePlumber; `./install.sh --status`, `--uninstall`, `--dry-run`.
+Rerun it after every PipeWire update.
+
+By hand (needs root):
 
     sudo install -m 0755 build/libspa-codec-bluez5-aptx.so /usr/lib64/spa-0.2/bluez5/
     systemctl --user restart wireplumber
