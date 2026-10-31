@@ -79,3 +79,9 @@ If the earbuds refuse the codec, PipeWire falls back to the next one (AAC/SBC).
 Original code: GNU GPL version 3 or later (`LICENSE`, SPDX `GPL-3.0-or-later`).
 Vendored code keeps its own licenses, which are GPL compatible: `third_party/celt/` is BSD-3-Clause (`COPYING.opus`),
 `third_party/pipewire-bluez5/` is MIT (`COPYING.pipewire`).
+
+## Arch Linux (AUR draft)
+
+`packaging/arch/` contains a `PKGBUILD` (`ssc-codec-git`) with a pacman hook. The plugin takes PipeWire's `aptx` slot, so the hook copies it over
+`libspa-codec-bluez5-aptx.so` of `pipewire-audio` after every upgrade (aptx stops working while it is installed; `pacman -S pipewire-audio` brings it back).
+Rebuild the package after each PipeWire update. Untested on Arch so far.
