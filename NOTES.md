@@ -257,3 +257,37 @@ event lists through Opus' 24-bit coder until the bytes match); `tools/ssc_combtr
 - Stream details visible in strings: packets have a header with **sync words** (`SCALABLE_HEAD_SIZE`), a **sequence number** (gap triggers PLC),
   UHQ packets log `UHQ seq` from `data[3]` and a timestamp; bitrate adaptation uses `SSC bitrate{info:0x%02X->QosLevel:%d}`; "SBM" (SoundBooster) offsets/direction.
 - Use: decoder = round-trip oracle for the encoder; its packet pre-parser defines the exact packet header.
+
+## 2026-10-30: the evening's "Failure in Bluetooth audio transport" is NOT this codec (checked against all logs)
+Symptom the user saw: every playback session dies after seconds-to-minutes and the player (KDE Elisa) crashes in its `QAudioContext`
+thread (`SIGSEGV`, 5 times today: 22:06:08, 22:07:17, 22:08:37, 22:15:19, 22:19:37 — each crash follows a pipewire node error by ~2 s).
+
+What the logs say (`journalctl --user -u wireplumber --since today | grep 'Failure in Bluetooth'`, `-u bluetooth`, `-k`):
+- 34 occurrences of `spa.bluez5: Failure in Bluetooth audio transport <path>` since Oct 28, **before any SSC plugin existed** (repo born Oct 30 20:30):
+  Oct 28 15:45 a *different headset* on `hci0` (`dev_XX_XX_XX_XX_XX_XX/sep2`, AAC); Oct 29 repeatedly on the Buds' `sep1` (SBC) and `sep2` (AAC)
+  and on HFP paths (`/fd0`, `/fd52`, `/fd64` = SCO). Tonight: sep3 (SSC) failures at 22:06:06, 22:07:15, 22:08:35 and 22:19:35, one error coming from
+  the socket write path alone at 22:15:17, and sep2 (AAC) failing too at 21:29:27 and 21:35:05.
+- Adapter: the laptop's only, integrated Realtek RTL8852BT controller (USB-attached internally, 13d3:3619; `hci0`/`hci1` are the same chip re-enumerated after a USB reset, Delete Index/New Index in btmon); firmware loads fine in the kernel log, no HCI/L2CAP errors at the drop times, `bluetoothd`
+  logs nothing on disconnect at default level, nothing in the kernel log either — a silent link drop.
+- Acquire-to-failure intervals today: 7 s, 41 s, 49 s, 248 s, 107 s — random like an RF/USB co-existence drop, not codec-related.
+- `wireplumber` stayed healthy through each failure (the 8.7k log lines in 20 s at connect time are only WP DEBUG on setup); the last session did
+  stream 107 s of music (fd acquired 22:17:48, Buds3 Pro, UHQ profile, config byte 0x0a exactly as `A2DP_ParseInfoSsc` expects).
+
+Why the SSC stream cannot be the cause: the firmware (above) treats bad SSC frames per packet — wrong length or a sequence gap rejects the frame
+and triggers PLC, never a hang-up — `meson test` verifies every header field against the reverse-engineered tables, and AAC failed the same evening.
+
+If it recurs (environment, not this repo):
+- `sudo btmon -T` during playback to capture the disconnect reason, `journalctl -k -f | grep -i bluetooth`;
+- Realtek combo chips share the radio with WiFi: try disabling deep powersave (`sudo modprobe rtw89_core disable_lps_deep=Y`),
+  disable USB autosuspend on the controller (`/sys/bus/usb/devices/*/power/autosuspend = -1`);
+- the Elisa `QAudioContext` SIGSEGV after the stream error is an Elisa/Qt bug on its own; other players survive the same event.
+
+## 2026-10-31: follow-up (btmon capture of a drop, then stable runs)
+- btmon during a `ssc_uhq` session (672-byte packets, 2 frames, every 18 ms): the stream is regular (no RTP sequence gaps, constant timestamp
+  step, same frame headers) until the Buds themselves send `Disconnect Complete`, reason `0x0e` (Connection Rejected due to Security Reasons), 107-121 s in.
+  The host never saw an error before that.
+- Afterwards `ssc_uhq` ran for more than 5 minutes with 1 frame per packet (`SSC_UHQ_FRAMES=1`: 346 bytes every 9 ms) and then again for
+  more than 5 minutes with the default 2 frames per packet, with no drop. So frame pairing is not the cause; the drops of the previous evening
+  happened with WirePlumber at debug level 5 and btmon running and are not reproduced since. Cause still unknown (link/RF, or Buds-side).
+- Kernel log: the Realtek controller does full USB resets (`usb 2-3: reset full-speed USB device`) with firmware reload about every 13 hours,
+  unrelated to the drop times.

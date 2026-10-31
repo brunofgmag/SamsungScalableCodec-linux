@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 lori28167
 project('ssc', 'c',
   version: '0.1.0',
-  license: 'BSD-3-Clause',
+  license: ['GPL-3.0-or-later', 'BSD-3-Clause'],	# original code GPL-3.0-or-later; vendored CELT BSD-3-Clause
   default_options: ['c_std=gnu11', 'warning_level=2', 'optimization=2'])
 
 cc = meson.get_compiler('c')
