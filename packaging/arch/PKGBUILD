@@ -4,13 +4,14 @@ pkgname=ssc-codec-git
 pkgver=0.1.0.r0.g0000000
 pkgrel=1
 pkgdesc='Samsung Scalable/Seamless Codec (SSC) A2DP codec for PipeWire (Galaxy Buds), replaces the aptx plugin'
-arch=('x86_64' 'aarch64')
+arch=('x86_64')
 url='https://github.com/lori28167/SamsungSeamlessCodec-linux'
 license=('GPL-3.0-or-later AND BSD-3-Clause')
 depends=('pipewire-audio' 'bluez-libs')
 makedepends=('git' 'meson' 'pipewire')
 provides=('ssc-codec')
 conflicts=('ssc-codec')
+options=('!debug')
 install=ssc-codec.install
 source=("git+$url.git"
         'ssc-codec.hook'
@@ -21,8 +22,12 @@ sha256sums=('SKIP'
 
 pkgver() {
     cd SamsungSeamlessCodec-linux
-    git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' \
-        || printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    local d
+    if d=$(git describe --long --tags 2>/dev/null); then
+        printf '%s' "$d" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+    else
+        printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    fi
 }
 
 build() {
