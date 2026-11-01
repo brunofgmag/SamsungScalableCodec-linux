@@ -14,6 +14,11 @@ those tables and to run the comparisons.
 > **Disclaimer.** Independent interoperability project, not affiliated with, endorsed by or supported by Samsung.
 > Samsung, Galaxy Buds and Seamless Codec are trademarks of their owners. Experimental software: it sends a vendor
 > codec stream to your earbuds. Use at your own risk.
+>
+> **Tested only on Samsung Galaxy Buds3 Pro** (Fedora 44, PipeWire 1.6.10). Other earbuds, firmware versions and
+> distributions are untested and may misbehave. The software is provided "as is", without warranty of any kind
+> (see the GPL-3.0 licence); the author accepts no responsibility or liability for how it is used or for any
+> damage, loss or malfunction (of earbuds, phone, computer or anything else) that results from using it.
 
 ## Status
 
