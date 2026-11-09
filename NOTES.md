@@ -297,7 +297,8 @@ Setup: Galaxy Buds2 Pro (Modalias `v0075pA013d0001`), CachyOS, PipeWire 1.6.10, 
 - Capability byte `0x3c` (44.1 + 48 kHz, bit 3, bit 2 HiFi; no 96 kHz bit, so no `ssc_uhq` profile). Configuration `0x18` is accepted, as on the Buds3 Pro.
 - Presets heard on these Buds, each fixed for the whole stream (`SSC_PRESET`, plugin without adaptation): 229k, 128k, 96k and 88k sound right;
   **192k sounds wrong** ("strange" for as long as it plays, back to normal when the preset changes). The table above shows Samsung's encoder writing
-  flags nibble `d` at 192k and 229k and `1` below; we always write `1`. 229k works with `1`, so this does not explain it by itself; untested.
+  flags nibble `d` at 192k and 229k and `1` below; we always write `1`. Tested and ruled out: `main` changed to code 19 bands at 192k
+  (`CELT_SET_END_BAND(19)`) and write nibble `d`, as Samsung's encoder does, still sounds wrong at fixed 192k on the Buds2 Pro.
 - Stutters at 229k: with WirePlumber at debug level each one is a burst of `send_buffer: Resource temporarily unavailable` (socket full, packets dropped)
   plus `reduce bitpool: 0`, the host asking the codec for a lower bitrate and the plugin having none. No xruns in the graph, no Wi-Fi scan or BlueZ event at those times.
 - The host (`media-sink.c`) calls `reduce_bitpool` only after a failed send, at most every 0.5 s, and skips it when its once-a-second check ran less than
